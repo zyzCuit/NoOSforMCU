@@ -1,0 +1,82 @@
+<!DOCTYPE HTML>
+<html>
+<body>
+<h1>设想</h1>
+<pre>
+    对于单片机编程应用来说，很多情况下都是没用到嵌入式操作系统。主要原因是单片机的应用都很简单，没有必要用到操作系统；另一个原因是单片机应用对成本都很敏感，所以其内存容量都很有限，无法支持操作系统运行。我个人从89年开始长期从事单片机的应用，积累了一些编程经验和技巧，现在想与大家分享，希望在单片机应用编程方面的技术人员有些帮助。
+这里总结出来的一种编程方法，不需要操作系统的支持，固定的编程套路。基本特点如下：
+  1、	具有实时处理能力；
+  2、	支持事件（或消息）驱动；
+  3、	浅层状态图编程；（防止堆栈出错）；
+
+    对于“具有实时处理能力”，这是现在单片机编程的基本要求，通常用中断方法解决。对于有硬实时要求的事件，可以直接在中断服务程序中解决；而对于可以软实时解决的，通常在中断服务程序中产生事件消息，然后交给消息处理程序处理即可。
+消息处理程序的作用就是检测消息队列，如果有消息，就一个一个从队列中取出并分发给相应的程序处理，直到队列取空为止，即进入低耗节电状态。
+    浅层状态编程的意思是说编程调用的层数不要太深，我认为越浅越好，便于阅读和理解，使得程序易于维护。
+
+    下面我就用实例开始说明我的编程方法。
+    首先要定义一个枚举类型enum，描述系统中所有事件消息和状态。形式如下：
+enum {
+	eNc,				//空，仅用于激活消息处理程序
+	eTimeMs,			//每毫秒产生一个
+	eTimeSec,			//每秒钟产生一个
+
+	eKeyScanInit,
+	eKeyScanFree,		//键盘空闲状态
+	eKeyScanDown,		//可能有键按下，通常延时20ms，进入eKeyScanPress状态对按键作去抖动处理，确认按键
+	eKeyScanPress,		//
+	eKeyScanUp,		//
+};
+由于枚举具有整数的性质，可以拥有至少多达64K个值，足够整个系统使用。
+如下是按键检测程序的编写框架, 每毫秒被消息处理程序调度一次，也就是说每秒执行1000次：
+void KeyScan( void )
+{
+	static unsigned state = eKeyScanInit;
+	static unsigned delayCnt = 0;
+	static unsigned KeyScanCode;
+	if( delayCnt != 0 ){ --delayCnt; return; }			//这里起到一个延时的作用
+
+	switch( state ){
+		case eKeyScanInit: 					//该状态仅用于初始
+			// KeyScanInit();				//如果要初始，请增加完成该代码
+			//delayCnt = 500;	//如果初始化后认为有必须延时稳定一段时间才检测按键的话，这里延时0.5秒
+	 		state = eKeyScanFree;				//至少延时1ms才开始检测按键
+			break;
+		case eKeyScanFree:
+			KeyScanCode = ReadKeyPress();			//ReadKeyPress()返回键盘扫描码，没按键则返回0
+			If( KeyScanCode != 0 ){
+				delayCnt = 20;				//如果有按键盘操作，则延时20ms去抖动
+				state = eKeyScanDown;
+			}
+			break;
+		case eKeyScanDown:
+			if( KeyScanCode == ReadKeyPress() ){		//如果20ms前后的键盘扫描码相同，则确认按键值
+				WriteKeyBuf( KeyScanCode );		//将按键扫描码写入键盘缓冲队列
+				state = eKeyScanPress;
+			}
+			else{
+				state = eKeyScanFress;			//如果20ms前后的键盘扫描码不相同，重新扫描
+			}
+			break;
+		case eKeyScanPress:
+			if( ReadKeyPress() == 0 ){ 
+				delayCnt = 20;				//延时20ms后确认松键操作
+				state = eKeyScanUp;
+			}
+			break;
+		case eKeyScanUp:
+			if( ReadKeyPress() == 0 ){
+				state = eKeyScanFress;			//确认松开按键
+			}
+			else{
+				state = eKeyScanPress;			//没有松开按键
+			}
+			break;
+		default: 
+			state = eKeyScanInit;
+	}
+}
+    上述代码没有解释ReadKeyPress()和WriteKeyBuf()，前者与硬件直接相关，而后者也有各种实现方法。至于去抖动的时间20ms，如果你认为不合理，可以调整。另外按下抖动只处理一次，你也可以增加状态检查多次。
+    注意整个程序中，用状态变量state和延时计数变量delayCnt来控制程序运行，必须为静态局部变量; state的作用相当一个状态机。编程中，不允许有其它延时方式出现，原因是如果出现了延时，就无法保证每毫秒调度该程度一次，这样delayCnt的作用就失效了。更为严重的是，如果整个系统中如果还有其它状态机程序工作在毫秒调度时，系统调度则完全失效。
+</pre>
+</body>
+</html>
